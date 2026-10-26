@@ -67,6 +67,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(STRATA_ENABLE_CUDA "Build the CUDA targets (Phase 2+)" OFF)
+option(STRATA_MINIMAX "Build the experimental native MiniMax-M3 text engine (CUDA only)" OFF)
 # AMD gfx906 (MI50, wave64): the same .cu sources compiled as HIP through the gfx906 compat layer.  The CUDA runtime and
 # cuBLAS names are mapped by the headers in include/strata/platform/hip_compat/, which go first on the include path,
 # and CUDA::cudart / CUDA::cublas become aliases of HIP's targets, so every CUDA target below stays as it is.  This is
@@ -773,6 +774,15 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
   add_executable(strata-q36ref src/qwen35/q36ref.cu)
   target_include_directories(strata-q36ref PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${_strata_gpu_include_directories})
   target_link_libraries(strata-q36ref PRIVATE strata_kernels strata_warnings ${_strata_gpu_runtime_target})
+  if(STRATA_MINIMAX)
+    if(STRATA_HIP_GFX906 OR STRATA_ENABLE_HIP)
+      message(FATAL_ERROR "STRATA_MINIMAX currently requires the NVIDIA CUDA backend")
+    endif()
+    add_executable(strata-minimax src/minimax/engine.cu)
+    target_include_directories(strata-minimax PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${_strata_gpu_include_directories})
+    target_link_libraries(strata-minimax PRIVATE strata_kernels strata_warnings CUDA::cudart CUDA::cublas)
+    strata_utf8_manifest(strata-minimax)
+  endif()
   # the engine path for the same family (serve protocol, prompt chunks, decode graph): src/qwen35/q36_engine.cu, a
   # library that `strata` switches to for a qwen35moe model (the family switch at the top of its main) and that
   # strata-q36 wraps on its own.  Not on gfx906 (#3172, #3271): it calls cuBLAS entry points the wave64 compat layer does

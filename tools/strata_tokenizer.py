@@ -20,6 +20,7 @@ import json
 import pathlib
 import sys
 import threading
+import unicodedata
 
 import regex
 
@@ -77,6 +78,15 @@ DEEPSEEK3_PATTERNS = (
     r"| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
 )
 
+# MiniMax-M2/M3's GPT4O pre-tokenizer. The original tokenizer.json expression
+# (llama.cpp 74b104c9 src/llama-vocab.cpp, MINIMAX_M2); Qwen's digit and case
+# splitting is different. Only this explicitly named family takes this path.
+MINIMAX_PATTERN = (
+    r"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?"
+    r"|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?"
+    r"|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+"
+)
+
 
 def _sequence_findall(patterns, text: str) -> list[str]:
     """llama.cpp's unicode_regex_split: the pieces of `text` after each pattern in turn splits every piece into its
@@ -123,7 +133,7 @@ class Tokenizer:
             seq = [regex.compile(x) for x in DEEPSEEK3_PATTERNS]
             self._split = lambda text: _sequence_findall(seq, text)
         else:
-            self._re = regex.compile(QWEN35_PATTERN)
+            self._re = regex.compile(MINIMAX_PATTERN if pre == "minimax-m2" else QWEN35_PATTERN)
             self._split = self._re.findall
 
         # The literals matched directly instead of being run through BPE.  GGUF token types: 3 = CONTROL,
@@ -255,6 +265,11 @@ class Tokenizer:
     PIECE_CACHE_MAX = 200_000    # pre-tokenizer pieces remembered (an agent resends its whole history every turn)
 
     def _encode_plain(self, text: str) -> list[int]:
+        # The official MiniMax tokenizer normalizes ordinary spans to NFC.
+        # Its byte-level round trip is therefore to normalized text; Qwen's
+        # unchanged path keeps the original string exactly.
+        if self.pre == "minimax-m2":
+            text = unicodedata.normalize("NFC", text)
         out: list[int] = []
         # A piece's ids depend on the piece alone, so repeated pieces (most of a resent conversation) are looked up
         # instead of merged again.  The ids are the ones _bpe gives: this only skips the work.
@@ -478,8 +493,9 @@ def extract(gguf_path, out_dir) -> dict:
         "add_bos_token": False,
         # The pattern is SHIPPED, not recomputed by the reader: it is transcribed from llama.cpp for the
         # declared `pre` type, and a C++ port that re-derived it would be free to get `\p{M}` wrong again.
-        "pre_pattern": QWEN35_PATTERN,
-        "pre_pattern_source": ".ref/llama.cpp src/llama-vocab.cpp L396 (LLAMA_VOCAB_PRE_TYPE_QWEN35)",
+        "pre_pattern": MINIMAX_PATTERN if tk.pre == "minimax-m2" else QWEN35_PATTERN,
+        "pre_pattern_source": ("llama.cpp 74b104c9 src/llama-vocab.cpp (LLAMA_VOCAB_PRE_TYPE_MINIMAX_M2)"
+                               if tk.pre == "minimax-m2" else ".ref/llama.cpp src/llama-vocab.cpp L396 (LLAMA_VOCAB_PRE_TYPE_QWEN35)"),
     }
     (out / "vocab.json").write_text(json.dumps(tk.ids, ensure_ascii=False), encoding="utf-8")
     (out / "merges.txt").write_text("\n".join("%s %s" % k for k, _ in
