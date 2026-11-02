@@ -4,10 +4,10 @@ Run Strata in a container with a prebuilt engine. Install Docker, the host GPU d
 requirements in the table below. NVIDIA and AMD images can download and prepare a model on first start;
 Intel Arc needs prepared model files. Keep the data volume to reuse downloads and settings.
 
-> **On this page:** [Which image](#which-image-for-which-card) · [One command per card](#one-command-per-card) ·
-> [Docker Compose](#docker-compose) · [Settings](#settings) · [The API key](#the-api-key) · [Connect your apps](#connect-your-coding-apps) ·
-> [Watch and stop](#watch-it-and-stop-it) · [Update](#updating) · [Troubleshooting](#troubleshooting) ·
-> [From the older image](#from-the-older-image) · [Build it yourself](#build-it-yourself)
+> **On this page:** [Which image](#which-image-for-which-card) Ã‚Â· [One command per card](#one-command-per-card) Ã‚Â·
+> [Docker Compose](#docker-compose) Ã‚Â· [Settings](#settings) Ã‚Â· [The API key](#the-api-key) Ã‚Â· [Connect your apps](#connect-your-coding-apps) Ã‚Â·
+> [Watch and stop](#watch-it-and-stop-it) Ã‚Â· [Update](#updating) Ã‚Â· [Troubleshooting](#troubleshooting) Ã‚Â·
+> [From the older image](#from-the-older-image) Ã‚Â· [Build it yourself](#build-it-yourself)
 
 Docker on a **Mac** has no access to the Mac's graphics chip (no Metal): use the Mac app or the Terminal
 ([MAC.md](MAC.md), [TERMINAL_LAUNCH.md](TERMINAL_LAUNCH.md)). Docker Desktop on **Windows** passes NVIDIA cards through
@@ -120,6 +120,7 @@ screens; leave out what you do not care about.
 | `PARALLEL` | requests answered at the same time, 1 to 8 | fitted to the card |
 | `VISION` | `off`, `on` (the model reads pictures), `gpu`, `cpu`; the picture-reader file (about 0.9 GB) is downloaded with the model | `off` |
 | `KV` | conversation memory format: `int8`, `q4_0` (half the memory), `k8v4`, `fp16` | `int8` |
+| `DRAFTING` | `auto`, `mtp`, `dflash2`, `off`; passed to `launch --drafting`. experimental DFlash2 serving requires this branch's source-built image (see below) | saved choice, otherwise `auto` |
 | `GPU` / `GPUS` | card numbers as the monitor lists them, `0` or `0,1`; empty or `all` = the engine's choice. Changing it later makes the model's run settings again (the files stay) | all that fit |
 | `GPU_ROLES` | a role for each card, `1=main,0=helper` (`main`, `helper`, `off`; cards you do not name are off; not together with `GPU` / `GPUS`). Passed to `launch --gpu-roles`; see [MULTI_GPU.md](MULTI_GPU.md) | none |
 | `TUNE` | `quick` (runtime depends on hardware and workload), `thorough`, `skip`; done once and kept in the preset (`RETUNE=1` tunes again) | `skip` |
@@ -139,6 +140,24 @@ What is in the volume `/data`: `Strata-data/` (model files, the prepared pack), 
 
 To keep it all on a big disk, mount a folder there instead of the named volume: `-v /mnt/big/strata:/data` (the folder must be writable by the
 container's user). Nothing large is written anywhere else in the container.
+
+### Choosing the drafter
+
+Add `-e DRAFTING=mtp` to your `docker run` command, or set `DRAFTING=mtp` in the compose `.env` file.
+Use `off` to disable the draft layer or `auto` to use Strata's recommendation. Leaving the variable empty keeps the saved choice.
+Recreate the container to apply a new choice; the model files stay in the volume.
+
+`DRAFTING=dflash2` selects experimental API serving in this branch's **source-built image**, on one GPU or a layer split, for
+Qwen3.8-Flash-Next and Swift. A follow-up turn reuses its conversation and `PARALLEL` works as with MTP: a request running alone drafts, and
+requests running at the same time use batch slots without drafts.
+
+This is an experimental engine port, not a released feature. The drafter runs on the last GPU of the split. A late binding failure stops
+startup; there is no loaded MTP layer to fall back to at that point.
+
+Published images and images built with `docker/Dockerfile` use packaged engines and still fall back to MTP. The root
+`Dockerfile` sets `STRATA_DFLASH2_SERVE=1` because it builds the matching engine. Do not set that marker on a stock image
+expecting it to add engine support. See [the experimental build and validation guide](DFLASH2_SERVING.md), including
+CUDA 12 settings for a split with P100, RTX 2080 Ti and RTX 3060 cards and what was measured.
 
 ### Files you already have
 

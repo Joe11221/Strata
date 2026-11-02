@@ -18,6 +18,7 @@ services:
       CONTEXT: ${CONTEXT:-32k}
       PARALLEL: ${PARALLEL:-}
       VISION: ${VISION:-off}
+      DRAFTING: ${DRAFTING:-}             # auto | mtp | dflash2 | off; DFlash2 serving is experimental
       TUNE: ${TUNE:-skip}
       API_KEY: ${API_KEY:-}
     volumes:
