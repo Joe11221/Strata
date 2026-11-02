@@ -6,7 +6,7 @@ conversation and several requests can run at once, the same as with MTP. It is a
 The split-stage tap transport and serial drafting integration are adapted from
 [upstream draft PR #3869](https://github.com/Niko1221/Strata/pull/3869), commit
 `5f436de2c3a9fbd36d2efa66629015be11308dcc`. That author's measurements are not validation of this branch.
-The local P100 VMAD fix from `7185fcb6` is retained; its original report is [P100_DP4A_ALIAS.md](P100_DP4A_ALIAS.md).
+Tesla P100 cards also need the VMAD fix of [PR #4274](https://github.com/Niko1221/Strata/pull/4274); the measurements below were made with it.
 
 ## Build for the mixed NVIDIA pool
 
