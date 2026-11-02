@@ -51,6 +51,16 @@ public:
 
     /// A new request: the ring is empty again.
     void reset() { have_ctx_ = 0; }
+    /// Conversation reuse: the ring as host bytes (ring_bytes() of them, about 81 MiB) and back.  A row depends only on the tokens up to it,
+    /// so a saved ring stays right for any later prompt that starts with those tokens (strata/program/df2_ring.hpp).
+    size_t ring_bytes() const { return (size_t) L_ * 2 * (size_t) kRing * NKV_ * HD_ * sizeof(float); }
+    bool ring_save(std::vector<float>& image, std::string& err);
+    bool ring_restore(const std::vector<float>& image, std::string& err);
+    /// Keeps rows [lo, hi), zeroes every other slot (a zero row adds nothing to the attention; a stale one would add another conversation's
+    /// text), and the next row is hi.  At most kRing rows.
+    bool ring_keep(int64_t lo, int64_t hi, std::string& err);
+    /// One past the last row in the ring.
+    int64_t rows_end() const { return have_ctx_; }
     /// Context rows without a draft: `n` rows of taps (device, [n][5 * n_embd]) for positions pos0 ... pos0 + n - 1.
     bool context(const float* taps_dev, int64_t n, int64_t pos0, std::string& err);
     /// One round: the new context rows (n_new in 1..8: the committed window rows, taps device [n_new][5 * n_embd], positions pos0 ...),

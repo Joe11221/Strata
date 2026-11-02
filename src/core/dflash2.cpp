@@ -501,6 +501,61 @@ bool Dflash2Drafter::context(const float* taps, int64_t n, int64_t pos0, std::st
     return true;
 }
 
+bool Dflash2Drafter::ring_save(std::vector<float>& image, std::string& err) {
+    const OnDevice on_device(device_);
+    const size_t elems = (size_t) kRing * NKV_ * HD_;
+    image.resize(ring_bytes() / sizeof(float));
+    if (cudaStreamSynchronize(cs_) != cudaSuccess) { err = std::string("dflash2: ") + cudaGetErrorString(cudaGetLastError()); return false; }
+    for (int l = 0; l < L_; ++l) {
+        if (cudaMemcpyAsync(image.data() + (size_t) l * 2 * elems, kring_[l], elems * sizeof(float), cudaMemcpyDeviceToHost, cs_) != cudaSuccess ||
+            cudaMemcpyAsync(image.data() + ((size_t) l * 2 + 1) * elems, vring_[l], elems * sizeof(float), cudaMemcpyDeviceToHost, cs_) != cudaSuccess) {
+            err = std::string("dflash2: ring save: ") + cudaGetErrorString(cudaGetLastError());
+            return false;
+        }
+    }
+    if (cudaStreamSynchronize(cs_) != cudaSuccess) { err = std::string("dflash2: ring save: ") + cudaGetErrorString(cudaGetLastError()); return false; }
+    return true;
+}
+
+bool Dflash2Drafter::ring_restore(const std::vector<float>& image, std::string& err) {
+    const OnDevice on_device(device_);
+    const size_t elems = (size_t) kRing * NKV_ * HD_;
+    if (image.size() != ring_bytes() / sizeof(float)) { err = "dflash2: ring restore: wrong size"; return false; }
+    if (cudaStreamSynchronize(cs_) != cudaSuccess) { err = std::string("dflash2: ") + cudaGetErrorString(cudaGetLastError()); return false; }
+    for (int l = 0; l < L_; ++l) {
+        if (cudaMemcpyAsync(kring_[l], image.data() + (size_t) l * 2 * elems, elems * sizeof(float), cudaMemcpyHostToDevice, cs_) != cudaSuccess ||
+            cudaMemcpyAsync(vring_[l], image.data() + ((size_t) l * 2 + 1) * elems, elems * sizeof(float), cudaMemcpyHostToDevice, cs_) != cudaSuccess) {
+            err = std::string("dflash2: ring restore: ") + cudaGetErrorString(cudaGetLastError());
+            return false;
+        }
+    }
+    if (cudaStreamSynchronize(cs_) != cudaSuccess) { err = std::string("dflash2: ring restore: ") + cudaGetErrorString(cudaGetLastError()); return false; }
+    return true;
+}
+
+bool Dflash2Drafter::ring_keep(int64_t lo, int64_t hi, std::string& err) {
+    const OnDevice on_device(device_);
+    lo = std::max<int64_t>(lo, std::max<int64_t>(hi - kRing, 0));
+    const int64_t kept = std::max<int64_t>(hi - lo, 0);
+    const int64_t clear = kRing - kept, start = hi % kRing;
+    const int64_t first = std::min<int64_t>(clear, kRing - start);
+    const size_t row = (size_t) HD_ * sizeof(float);
+    auto zero = [&](float* ring, int64_t slot, int64_t rows) {
+        for (int h = 0; h < NKV_; ++h)
+            if (rows > 0 && cudaMemsetAsync(ring + ((size_t) h * kRing + (size_t) slot) * HD_, 0, (size_t) rows * row, cs_) != cudaSuccess) return false;
+        return true;
+    };
+    for (int l = 0; l < L_; ++l) {
+        if (!zero(kring_[l], start, first) || !zero(vring_[l], start, first) || !zero(kring_[l], 0, clear - first) || !zero(vring_[l], 0, clear - first)) {
+            err = std::string("dflash2: ring clear: ") + cudaGetErrorString(cudaGetLastError());
+            return false;
+        }
+    }
+    if (cudaStreamSynchronize(cs_) != cudaSuccess) { err = std::string("dflash2: ring clear: ") + cudaGetErrorString(cudaGetLastError()); return false; }
+    have_ctx_ = std::max<int64_t>(hi, 0);
+    return true;
+}
+
 bool Dflash2Drafter::draft(const float* taps, int n_new, int64_t pos0, int32_t anchor, int32_t* drafts, float* probs, std::string& err) {
     if (!bound_) { err = "dflash2: not bound"; return false; }
     if (n_new < 1 || n_new > kRows) { err = "dflash2: draft rows out of range"; return false; }
