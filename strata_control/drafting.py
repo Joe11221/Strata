@@ -15,6 +15,7 @@ model starts with the MTP and ``Decision.note`` says why in plain words.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -99,9 +100,10 @@ PACK_NAME = "qwen3.8-flash-next-dflash2.q8.pack"
 VRAM_GB = 1.2                # what the drafter needs in graphics memory (the engine's own estimate)
 FOLDER = "dflash2"           # under the model data folder, next to ``mtp``
 
-#: model families (strata launch --family) the drafter was trained for and measured on: Qwen3.8-Flash-Next and its Gyro build.
-SUPPORTED_FAMILIES = ("qwen", "gyro")
-_SUPPORTED_NAME = re.compile(r"^qwen3\.8-flash-next(-gyro-[a-z0-9._-]+|-(q|iq|tq)\d[a-z0-9_.]*)?$", re.IGNORECASE)
+#: model families (strata launch --family) the drafter runs on: Qwen3.8-Flash-Next, its Gyro build and the Swift fine-tune. The drafter was
+#: trained on the original weights; Swift has the same layers and tokenizer, and only an explicit choice runs it there (Auto stays with the table).
+SUPPORTED_FAMILIES = ("qwen", "gyro", "swift")
+_SUPPORTED_NAME = re.compile(r"^(qwen3\.8-flash-next(-(gyro|swift)-[a-z0-9._-]+|-(q|iq|tq)\d[a-z0-9_.]*)?|swift-[a-z0-9._-]+)$", re.IGNORECASE)
 
 
 def supported_model(model_name: str | None = None, family: str | None = None) -> bool:
@@ -138,12 +140,10 @@ def normalize(value: Any) -> str:
     return text if text in MODES else DEFAULT_MODE
 
 
-#: Does the engine in this release run DFlash2 when it serves (the app and `strata launch`)? In f-023-int src/program/generate.cpp, `--draft dflash2`
-#: is "for one card and the CLI run (not --serve, --batch or a layer split)": a served model prints "--draft dflash2 is off: ... the MTP drafts
-#: instead". So today the choice cannot take effect when serving, and nothing is downloaded or packed for it (1.2 GB for no effect would be a bad
-#: surprise); the start says so ("Drafting: MTP (DFlash2 isn't available in this mode yet)"). Flip this when the engine serves it; everything
-#: else (flags, download, pack, fallback text) is in place and tested with it on.
-ENGINE_SERVES_DFLASH2 = False
+# The experimental source-built Docker image carries the matching engine port and sets this marker.
+# Packaged engines still refuse --serve: installing this Terminal alone must not enable a useless download.
+# Native source builds can set the marker explicitly after building the engine from this branch.
+ENGINE_SERVES_DFLASH2 = os.environ.get("STRATA_DFLASH2_SERVE") == "1"
 
 #: Why the MTP runs when something else was asked for: a closed set of short reasons, each one is a sentence in the interface catalog in all eight
 #: languages (the line is "Drafting: MTP (<reason>)").
@@ -201,15 +201,20 @@ def strip_draft_flags(args: list[Any]) -> list[str]:
 
 
 def data_dir_of(args: list[Any]) -> Path | None:
-    """The model data folder an argument list belongs to: `--pack <data>/packs/<tag>`, else `--mtp <data>/mtp/rt`."""
+    """The model data folder an argument list belongs to: `--pack <data>/packs/<tag>`, else `--mtp <data>/mtp/rt`. A hand-written run config can
+    keep its packs apart from its data: then the folder that already holds the drafter wins."""
     items = [str(a) for a in args]
+    found: list[Path | None] = []
     for flag, up in (("--pack", 2), ("--mtp", 2)):
         if flag in items and items.index(flag) + 1 < len(items):
             path = Path(items[items.index(flag) + 1])
             if flag == "--mtp" and path.name.isdigit():
                 continue
-            return path.parents[up - 1] if len(path.parents) >= up else None
-    return None
+            found.append(path.parents[up - 1] if len(path.parents) >= up else None)
+    for folder in found:
+        if pack_ready(folder):
+            return folder
+    return found[0] if found else None
 
 
 def apply(cfg: dict[str, Any], *, klass: str, data_dir: str | Path | None = None, family: str | None = None) -> Decision:
@@ -230,6 +235,27 @@ def apply(cfg: dict[str, Any], *, klass: str, data_dir: str | Path | None = None
     return decision
 
 
+def apply_env(cfg: dict[str, Any], env: Any = None) -> str | None:
+    """Docker: ``DRAFTING`` over a run config's own choice, for a container that starts ``strata serve --profile`` and so skips the entrypoint.
+    In place; the file is not changed. Outside Docker, or with the variable empty, nothing happens. Returns the choice, or None. DFlash2 drafts
+    on serial windows, so a start that will really use it also turns off a pipelined-window setting the file may hold."""
+    env = os.environ if env is None else env
+    text = str(env.get("DRAFTING") or "").strip().lower()
+    if env.get("STRATA_IN_DOCKER") != "1" or not text:
+        return None
+    if text not in MODES:
+        raise ValueError(f"DRAFTING={text} is not one of {', '.join(MODES)}")
+    cfg["drafting"] = text
+    args = [str(a) for a in cfg.get("args") or []]
+    if decide(text, klass="other", model_name=cfg.get("model_name"), data_dir=data_dir_of(args)).drafter == "dflash2":
+        if "--pipeline-windows" in args and args.index("--pipeline-windows") + 1 < len(args):
+            args[args.index("--pipeline-windows") + 1] = "0"
+        else:
+            args += ["--pipeline-windows", "0"]
+        cfg["args"] = args
+    return text
+
+
 # --------------------------------------------------------------------------------------------------- what the engine said
 
 _ON = re.compile(r"DFlash2 drafter on\b")
@@ -244,7 +270,7 @@ def fallback_note(log_text: str) -> str:
     if "--draft dflash2" not in text:
         return ""
     low = text.lower()
-    if "it is for one card and the cli run" in low or "needs a native pack" in low or "it needs --mtp" in low:
+    if "it is for one card and the cli run" in low or "it is not available with" in low or "needs a native pack" in low or "it needs --mtp" in low:
         reason = NOT_HERE
     else:
         reason = DIDNT_FIT

@@ -106,14 +106,14 @@ class Decisions(unittest.TestCase):
     def test_dflash2_is_for_qwen38_flash_next_only(self):
         with serving_dflash2():
             self.ready()
-            for name in ("qwen3.6-35b-a3b-q4", "qwen3.8-flash-next-coder-iq3_xxs", "qwen3.8-flash-next-swift-iq2_xs", None):
+            for name in ("qwen3.6-35b-a3b-q4", "qwen3.8-flash-next-coder-iq3_xxs", "swiftly-other", None):
                 d = drafting.decide("dflash2", klass="blackwell", model_name=name, data_dir=self.data)
                 self.assertEqual((d.drafter, d.note), ("mtp", drafting.NOT_SUPPORTED), name)
                 self.assertFalse(drafting.needs_pack("dflash2", klass="blackwell", model_name=name, data_dir=self.data))
-            for name in (GYRO, "qwen3.8-flash-next-q2_0", "qwen3.8-flash-next-iq3_xxs"):
+            for name in (GYRO, "qwen3.8-flash-next-q2_0", "qwen3.8-flash-next-iq3_xxs", "qwen3.8-flash-next-swift-iq2_xs", "Swift-IQ3-S"):
                 self.assertEqual(drafting.decide("dflash2", klass="blackwell", model_name=name, data_dir=self.data).drafter, "dflash2", name)
-            self.assertTrue(drafting.supported_model(family="qwen") and drafting.supported_model(family="gyro"))
-            self.assertFalse(drafting.supported_model(family="coder") or drafting.supported_model(family="swift") or drafting.supported_model(family="nvfp4"))
+            self.assertTrue(drafting.supported_model(family="qwen") and drafting.supported_model(family="gyro") and drafting.supported_model(family="swift"))
+            self.assertFalse(drafting.supported_model(family="coder") or drafting.supported_model(family="nvfp4"))
 
     def test_while_the_engine_cannot_serve_it_the_choice_says_so_and_nothing_is_downloaded(self):
         self.assertFalse(drafting.ENGINE_SERVES_DFLASH2, "src/program/generate.cpp: --draft dflash2 is off with --serve in this release")
@@ -440,7 +440,7 @@ class TheAppAsksControl(unittest.TestCase):
 
     def test_a_model_that_is_not_installed_yet_is_asked_about_by_its_family(self):
         with serving_dflash2():
-            for family, needed in (("gyro", True), ("qwen", True), ("coder", False), ("swift", False)):
+            for family, needed in (("gyro", True), ("qwen", True), ("swift", True), ("coder", False)):
                 code, out, err = run_cli(["drafting", "plan", "--family", family, "--mode", "dflash2", "--data-dir", str(self.data), "--output", "json"])
                 self.assertEqual(code, 0, err)
                 self.assertEqual(json.loads(out)["needed"], needed, family)

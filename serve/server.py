@@ -9076,6 +9076,10 @@ def main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> in
     split_joined_args(cfg)
     if a.config and a.engine == "strata":
         cfg = apply_saved_tuning(cfg)
+        try:
+            drafting.apply_env(cfg)   # Docker: DRAFTING over the run config, also for a container that starts `strata serve --profile`
+        except ValueError as exc:
+            ap.error(str(exc))
     attestation_key = os.environ.pop("STRATA_OWNER_ATTEST_KEY", None)
     launch_attestation = None
     if a.owner_fd is not None:
